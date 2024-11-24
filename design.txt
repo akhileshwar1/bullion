@@ -1,0 +1,67 @@
+Brief: To read bank alerts from gmail and modify the cashflow statement and the balance sheet accordingly.
+
+                           
+                             ┌───────────┐    bank alerts
+                             │ gmail api ├────────────────────┐
+                             └───────────┘                    │
+                                                              │
+                                                              │
+                                                              │
+                                                              │
+                                                              ▼
+                                                         ┌──────────┐
+                                                         │ backend  │
+                                                         └────┬─────┘
+                                                              │
+                                                              │
+                                                              │to
+                                                              │statements
+                                                              │
+                           ┌────────────┐                     │
+                           │ sheets api │◄────────────────────┘
+                           └────────────┘
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

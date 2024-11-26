@@ -29,26 +29,27 @@ Brief: To read bank alerts from gmail and modify the cashflow statement and the 
                                              │ google sheets     │
                                              └───────────────────┘
 
+-----------------------------------------------------------------------------------------------------------------------
+OAUTH 2.0 FLOW:
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+         (resource owner)                                                           (resource server)
+          ┌─────┐                                     (client)                      ┌───────┐
+          │ me  ├────oauth screen, provide consent for bullion, get the token───────┤ google│
+          └──┬──┘                                                                   └────┬──┘
+             │                                                                           │
+             │                                                                           │
+             │   2. update          ┌──────────┐                                         │
+             └──────────────────────┤ env file │                                         │   
+                                    └────┬─────┘                                         │
+                                         │                                               │
+         (impersonate client)            │                                               │                  
+          ┌────────┐                     │                                               │
+          │backend ├───────────────────3.fetch                                           │
+          └────┬───┘                                                                     │
+               │                                                                         │
+               │                                                                         │
+               │                                                                         │
+               └──────────────────────────►4. make watch request─────────────────────────┘
 
 
 

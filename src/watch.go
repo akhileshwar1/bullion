@@ -80,7 +80,7 @@ func SetupGmailWatch() {
 
 	// Proceed with the watch request
 	watchReq := &gmail.WatchRequest{
-		LabelIds:  []string{"INBOX"},
+		LabelIds:  []string{"Label_3563088197952805435"},
 		TopicName: topicName,
 	}
 

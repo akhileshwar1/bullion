@@ -6,6 +6,41 @@ import (
 	"encoding/json"
 )
 
+type HistoryResponse struct {
+	History []History `json:"history"`
+}
+
+type History struct {
+	MessagesAdded []MessagesAdded `json:"messagesAdded"`
+}
+
+type MessagesAdded struct {
+	Message Message `json:"message"`
+}
+
+// Message represents a Gmail message.
+type Message struct {
+	ID string `json:"id"`
+}
+
+// MessageResponse represents the response from the Gmail Message API.
+type MessageResponse struct {
+	Payload Payload `json:"payload"`
+}
+
+type Payload struct {
+	Parts []Part `json:"parts"`
+}
+
+type Part struct {
+	MimeType string `json:"mimeType"`
+	Body     Body   `json:"body"`
+}
+
+type Body struct {
+	Data string `json:"data"`
+}
+
 type PubSubMessage struct {
 	Message     MessageData `json:"message"`
 	Subscription string      `json:"subscription"`
@@ -19,7 +54,7 @@ type MessageData struct {
 
 type DecodedData struct {
 	EmailAddress string `json:"emailAddress"`
-	HistoryID    int `json:"historyId"`
+	HistoryID    uint64 `json:"historyId"`
 }
 
 func (m *MessageData) DecodeData() (DecodedData, error) {

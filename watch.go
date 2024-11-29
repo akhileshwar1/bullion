@@ -14,7 +14,7 @@ import (
 )
 
 func SetupGmailWatch() {
-	err := godotenv.Load("../.env")
+	err := godotenv.Load(".env")
 	if err != nil {
 		log.Fatalf("Error loading .env file: %v", err)
 	}
@@ -63,7 +63,7 @@ func SetupGmailWatch() {
 		}
 
 		// Update the .env file with the new access token
-		err := updateEnvFile("../.env", "ACCESS_TOKEN", newToken.AccessToken)
+		err := updateEnvFile(".env", "ACCESS_TOKEN", newToken.AccessToken)
 		if err != nil {
 			log.Fatalf("Failed to update .env file: %v", err)
 		}
@@ -80,7 +80,8 @@ func SetupGmailWatch() {
 
 	// Proceed with the watch request
 	watchReq := &gmail.WatchRequest{
-		LabelIds:  []string{"Label_3563088197952805435"},
+		// LabelIds:  []string{"Label_3563088197952805435"},
+		LabelIds:  []string{"UNREAD"},
 		TopicName: topicName,
 	}
 

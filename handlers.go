@@ -7,7 +7,8 @@ import (
   "net/http"
   "os"
   "strings"
-
+  "regexp"
+  "strconv"
   "github.com/gin-gonic/gin"
   "google.golang.org/api/gmail/v1"
 )
@@ -71,7 +72,6 @@ func processHistory(srv *gmail.Service, user string, historyID uint64, historyBu
   return nil
 }
 
-
 func processMessage(srv *gmail.Service, user, messageID string) error {
   messageCall := srv.Users.Messages.Get(user, messageID)
   messageResponse, err := messageCall.Do()
@@ -79,7 +79,20 @@ func processMessage(srv *gmail.Service, user, messageID string) error {
     return fmt.Errorf("unable to retrieve message: %v", err)
   }
 
+  // Check if the email is from the expected sender
   if isEmailFrom(messageResponse, os.Getenv("EXPECTED_SENDER")) {
+    // Extract the subject from the headers
+    var subject string
+    for _, header := range messageResponse.Payload.Headers {
+      if header.Name == "Subject" {
+        subject = header.Value
+        break
+      }
+    }
+    if subject == "" {
+      return fmt.Errorf("subject not found in message headers")
+    }
+
     // Extract the plain text body
     for _, part := range messageResponse.Payload.Parts {
       if part.MimeType == "text/plain" && part.Body.Data != "" {
@@ -87,13 +100,21 @@ func processMessage(srv *gmail.Service, user, messageID string) error {
         if err != nil {
           return fmt.Errorf("unable to decode message body: %v", err)
         }
-        log.Printf("Message Body: %s\n", body)
+
+        // Pass the subject and body to the parseTransaction function
+        transaction, err := parseTransaction(subject, body)
+        if err != nil {
+          return fmt.Errorf("unable to parse transaction: %v", err)
+        }
+
+        log.Printf("Parsed Transaction - Type: %s, Amount: %.2f\n", transaction.Type, transaction.Amount)
       }
     }
   }
 
   return nil
 }
+
 
 func isEmailFrom(messageResponse *gmail.Message, expectedSender string) bool {
   var fromEmail string
@@ -118,6 +139,39 @@ func isEmailFrom(messageResponse *gmail.Message, expectedSender string) bool {
   }
 
   return true
+}
+
+func parseTransaction(subject, body string) (*TransactionDetails, error) {
+    // Determine transaction type from the subject
+    subjectWords := strings.Fields(subject)
+    if len(subjectWords) == 0 {
+        return nil, fmt.Errorf("empty subject")
+    }
+    transactionType := subjectWords[0] // First word is either "Debit" or "Credit"
+
+    if transactionType != "Debit" && transactionType != "Credit" {
+        return nil, fmt.Errorf("unknown transaction type: %s", transactionType)
+    }
+
+    // Regex to extract the amount
+    re := regexp.MustCompile(`INR\s([\d,]+(?:\.\d{2})?)`) // Matches patterns like "INR 999" or "INR 222.73"
+    matches := re.FindStringSubmatch(body)
+    if len(matches) < 2 {
+        return nil, fmt.Errorf("amount not found in body")
+    }
+
+    // Convert the amount to float
+    amountStr := strings.ReplaceAll(matches[1], ",", "") // Remove commas if present
+    amount, err := strconv.ParseFloat(amountStr, 64)
+    if err != nil {
+        return nil, fmt.Errorf("invalid amount format: %v", err)
+    }
+
+    // Return parsed transaction details
+    return &TransactionDetails{
+        Type:   transactionType,
+        Amount: amount,
+    }, nil
 }
 
 func decodeBase64URL(data string) (string, error) {

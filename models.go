@@ -6,6 +6,11 @@ import (
 	"encoding/json"
 )
 
+type TransactionDetails struct {
+    Type   string  // "Debit" or "Credit"
+    Amount float64 // Transaction amount
+}
+
 type HistoryResponse struct {
 	History []History `json:"history"`
 }

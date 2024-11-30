@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+  "strings"
 	"context"
   "os"
 	"net/http"
@@ -115,9 +116,7 @@ func processHistory(srv *gmail.Service, user string, historyID uint64) error {
     log.Println(messageSet)
     for _, history := range response.History {
         for _, msgAdded := range history.MessagesAdded {
-            log.Println("message")
             if !messageSet[msgAdded.Message.Id] {
-                fmt.Println("in message")
                 messageSet[msgAdded.Message.Id] = true
                 err := processMessage(srv, user, msgAdded.Message.Id)
                 if err != nil {
@@ -132,24 +131,53 @@ func processHistory(srv *gmail.Service, user string, historyID uint64) error {
     return nil
 }
 
-func processMessage(srv *gmail.Service, user, messageID string) error {
-    messageCall := srv.Users.Messages.Get(user, messageID)
-    messageResponse, err := messageCall.Do()
-    if err != nil {
-        return fmt.Errorf("unable to retrieve message: %v", err)
-    }
 
+func processMessage(srv *gmail.Service, user, messageID string) error {
+  messageCall := srv.Users.Messages.Get(user, messageID)
+  messageResponse, err := messageCall.Do()
+  if err != nil {
+    return fmt.Errorf("unable to retrieve message: %v", err)
+  }
+
+  if isEmailFrom(messageResponse, os.Getenv("EXPECTED_SENDER")) {
     // Extract the plain text body
     for _, part := range messageResponse.Payload.Parts {
-        if part.MimeType == "text/plain" && part.Body.Data != "" {
-            body, err := decodeBase64URL(part.Body.Data)
-            if err != nil {
-                return fmt.Errorf("unable to decode message body: %v", err)
-            }
-            log.Printf("Message Body: %s\n", body)
+      if part.MimeType == "text/plain" && part.Body.Data != "" {
+        body, err := decodeBase64URL(part.Body.Data)
+        if err != nil {
+          return fmt.Errorf("unable to decode message body: %v", err)
+        }
+        log.Printf("Message Body: %s\n", body)
+      }
+    }
+  }
+
+  return nil
+}
+
+func isEmailFrom(messageResponse *gmail.Message, expectedSender string) bool {
+    var fromEmail string
+
+    // Check the "From" field in the message headers
+    for _, header := range messageResponse.Payload.Headers {
+        if header.Name == "From" {
+            fromEmail = header.Value
+            break
         }
     }
-    return nil
+
+    if fromEmail == "" {
+        log.Println("Message does not have a 'From' field")
+        return false
+    }
+
+    // Verify if the email is from the specified address
+    if !strings.Contains(fromEmail, expectedSender) {
+        log.Printf("Message is from %s, skipping\n", fromEmail)
+        return false
+    }
+
+    return true
 }
 
 func decodeBase64URL(data string) (string, error) {

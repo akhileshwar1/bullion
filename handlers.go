@@ -11,9 +11,10 @@ import (
   "strconv"
   "github.com/gin-gonic/gin"
   "google.golang.org/api/gmail/v1"
+	"google.golang.org/api/sheets/v4"
 )
 
-func webhookHandler(srv *gmail.Service, historyBuffer *[]uint64, messageSet map[string]bool) gin.HandlerFunc {
+func webhookHandler(gsrv *gmail.Service, ssrv *sheets.Service, historyBuffer *[]uint64, messageSet map[string]bool) gin.HandlerFunc {
   return func(c *gin.Context) {
     var pubSubMessage PubSubMessage
     if err := c.ShouldBindJSON(&pubSubMessage); err != nil {
@@ -33,12 +34,12 @@ func webhookHandler(srv *gmail.Service, historyBuffer *[]uint64, messageSet map[
     // Inputs
     user := "me"
     historyID := decodedData.HistoryID
-    processHistory(srv, user, historyID, historyBuffer, messageSet) // Use the passed srv
+    processHistory(gsrv, ssrv, user, historyID, historyBuffer, messageSet) // Use the passed srv
     c.JSON(http.StatusOK, gin.H{"status": "success"})
   }
 }
 
-func processHistory(srv *gmail.Service, user string, historyID uint64, historyBuffer *[]uint64, messageSet map[string]bool) error {
+func processHistory(gsrv *gmail.Service, ssrv *sheets.Service, user string, historyID uint64, historyBuffer *[]uint64, messageSet map[string]bool) error {
   oldestHistoryID := getOldestHistoryID(*historyBuffer)
   fmt.Println("in processing history!!")
   fmt.Println(oldestHistoryID)
@@ -48,7 +49,7 @@ func processHistory(srv *gmail.Service, user string, historyID uint64, historyBu
   }
 
   // we don't start with the latest historyid since there will be no changes after that.
-  historyCall := srv.Users.History.List(user).StartHistoryId(oldestHistoryID)
+  historyCall := gsrv.Users.History.List(user).StartHistoryId(oldestHistoryID)
   response, err := historyCall.Do()
   if err != nil {
     return fmt.Errorf("error retrieving history: %v", err)
@@ -59,7 +60,7 @@ func processHistory(srv *gmail.Service, user string, historyID uint64, historyBu
     for _, msgAdded := range history.MessagesAdded {
       if !messageSet[msgAdded.Message.Id] {
         messageSet[msgAdded.Message.Id] = true
-        err := processMessage(srv, user, msgAdded.Message.Id)
+        err := processMessage(gsrv, ssrv, user, msgAdded.Message.Id)
         if err != nil {
           log.Printf("Error processing message: %v\n", err)
         }
@@ -72,8 +73,8 @@ func processHistory(srv *gmail.Service, user string, historyID uint64, historyBu
   return nil
 }
 
-func processMessage(srv *gmail.Service, user, messageID string) error {
-  messageCall := srv.Users.Messages.Get(user, messageID)
+func processMessage(gsrv *gmail.Service, ssrv *sheets.Service, user, messageID string) error {
+  messageCall := gsrv.Users.Messages.Get(user, messageID)
   messageResponse, err := messageCall.Do()
   if err != nil {
     return fmt.Errorf("unable to retrieve message: %v", err)
@@ -108,6 +109,9 @@ func processMessage(srv *gmail.Service, user, messageID string) error {
         }
 
         log.Printf("Parsed Transaction - Type: %s, Amount: %.2f\n", transaction.Type, transaction.Amount)
+        if updateCashFlow(ssrv, os.Getenv("SPREADSHEET_ID"), os.Getenv("CF_SHEET_NAME"), *transaction) != nil {
+          log.Println("Did not update sheets!!")
+        }
       }
     }
   }
@@ -173,6 +177,50 @@ func parseTransaction(subject, body string) (*TransactionDetails, error) {
         Amount: amount,
     }, nil
 }
+
+
+func updateCashFlow(ssrv *sheets.Service, spreadsheetID string, sheetName string, transaction TransactionDetails) error {
+    // Define the target cell range using sheetID and transaction type
+    var cellRange string
+    if transaction.Type == "Debit" {
+        cellRange = fmt.Sprintf("%s!%s", sheetName, os.Getenv("CF_DEBIT_CELL"))
+    } else if transaction.Type == "Credit" {
+        cellRange = fmt.Sprintf("%s!%s", sheetName, os.Getenv("CF_CREDIT_CELL"))
+    } else {
+        return fmt.Errorf("unknown transaction type: %s", transaction.Type)
+    }
+
+    // Read the current value in the target cell
+    readResp, err := ssrv.Spreadsheets.Values.Get(spreadsheetID, cellRange).Do()
+    if err != nil {
+        fmt.Println(err)
+        return fmt.Errorf("unable to read cell value: %v", err)
+    }
+
+    // Parse the current value (default to 0 if the cell is empty)
+    var currentValue float64
+    if len(readResp.Values) > 0 && len(readResp.Values[0]) > 0 {
+        currentValue, err = strconv.ParseFloat(readResp.Values[0][0].(string), 64)
+        if err != nil {
+            return fmt.Errorf("invalid number format in cell: %v", err)
+        }
+    }
+
+    newValue := currentValue + transaction.Amount
+
+    // Write the updated value back to the cell
+    writeReq := &sheets.ValueRange{
+        Values: [][]interface{}{{newValue}},
+    }
+    _, err = ssrv.Spreadsheets.Values.Update(spreadsheetID, cellRange, writeReq).ValueInputOption("RAW").Do()
+    if err != nil {
+        return fmt.Errorf("unable to update cell value: %v", err)
+    }
+
+    log.Printf("Updated %s cell (%s) with new value: %.2f\n", transaction.Type, cellRange, newValue)
+    return nil
+}
+
 
 func decodeBase64URL(data string) (string, error) {
   decodedData, err := base64.URLEncoding.DecodeString(data)

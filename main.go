@@ -10,6 +10,7 @@ import (
   "github.com/joho/godotenv"
   "golang.org/x/oauth2"
   "google.golang.org/api/option"
+	"google.golang.org/api/sheets/v4"
 )
 
 // Add a new historyId to the buffer
@@ -65,13 +66,18 @@ func main() {
 
   ctx := context.Background()
   client := config.Client(ctx, token)
-  srv, err := gmail.NewService(ctx, option.WithHTTPClient(client))
+  gsrv, err := gmail.NewService(ctx, option.WithHTTPClient(client))
   if err != nil {
-    fmt.Errorf("Unable to create Gmail service: %v, %v", err, srv)
+    fmt.Errorf("Unable to create Gmail service: %v, %v", err, gsrv)
   }
 
+  ssrv, err := sheets.NewService(ctx, option.WithHTTPClient(client))
+	if err != nil {
+		log.Fatalf("Unable to create Sheets service: %v", err)
+	}
+
   r := gin.Default()
-  setupRoutes(r, srv, &historyBuffer, messageSet)
+  setupRoutes(r, gsrv, ssrv, &historyBuffer, messageSet)
   if err := r.Run("0.0.0.0:3000"); err != nil {
     log.Fatalf("Error starting server: %v\n", err)
   }

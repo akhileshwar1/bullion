@@ -4,7 +4,7 @@ import (
   "log"
   "context"
   "os"
-  "fmt"
+  "time"
   "github.com/gin-gonic/gin"
   "google.golang.org/api/gmail/v1"
   "github.com/joho/godotenv"
@@ -30,24 +30,44 @@ func getOldestHistoryID(historyBuffer []uint64) uint64 {
   return historyBuffer[0]
 }
 
+
+// LoggingTokenSource is a custom TokenSource wrapper that logs refresh events.
+type LoggingTokenSource struct {
+  source oauth2.TokenSource
+}
+
+func (l *LoggingTokenSource) Token() (*oauth2.Token, error) {
+  // Fetch the token (this triggers the refresh if the token is expired)
+  newToken, err := l.source.Token()
+  if err != nil {
+    return nil, err
+  }
+
+  // Log when the token is refreshed
+  if newToken.Valid() && newToken.AccessToken != "" {
+    log.Println(newToken)
+    log.Printf("Refreshed Access Token: %s", newToken.AccessToken)
+  }
+  return newToken, nil
+}
+
 func main() {
   var historyBuffer []uint64 // Maintains older history IDs
-
   messageSet := make(map[string]bool) // To deduplicate messages
 
-
-  // SetupGmailWatch()
+  // Load environment variables
   err := godotenv.Load(".env")
   if err != nil {
-    fmt.Errorf("Error loading .env file: %v", err)
+    log.Fatalf("Error loading .env file: %v", err)
   }
-  accessToken := os.Getenv("ACCESS_TOKEN")
-  refreshToken := os.Getenv("REFRESH_TOKEN")
+
   clientID := os.Getenv("CLIENT_ID")
   clientSecret := os.Getenv("CLIENT_SECRET")
+  refreshToken := os.Getenv("REFRESH_TOKEN")
+  accessToken := os.Getenv("ACCESS_TOKEN")
 
-  if accessToken == "" || refreshToken == "" || clientID == "" || clientSecret == "" {
-    fmt.Errorf("Missing required environment variables")
+  if clientID == "" || clientSecret == "" || refreshToken == "" {
+    log.Fatalf("Missing required environment variables")
   }
 
   // OAuth2 Config
@@ -57,28 +77,44 @@ func main() {
     Endpoint: oauth2.Endpoint{
       TokenURL: "https://oauth2.googleapis.com/token",
     },
+    Scopes: []string{
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/spreadsheets",
+      "https://www.googleapis.com/auth/pubsub",
+    },
   }
 
+  // Create an initial token object
   token := &oauth2.Token{
     AccessToken:  accessToken,
     RefreshToken: refreshToken,
+    Expiry:       time.Now().Add(-1 * time.Hour), //NOTE: this forces token expiry after an hour prompting the token source to refresh the access token.
   }
 
+  // Wrap the token source with a LoggingTokenSource
   ctx := context.Background()
-  client := config.Client(ctx, token)
+  baseTokenSource := config.TokenSource(ctx, token)
+  loggingTokenSource := &LoggingTokenSource{source: baseTokenSource}
+
+  // Use the custom LoggingTokenSource to create an HTTP client
+  client := oauth2.NewClient(ctx, loggingTokenSource)
+
+  // Initialize Gmail service
   gsrv, err := gmail.NewService(ctx, option.WithHTTPClient(client))
   if err != nil {
-    fmt.Errorf("Unable to create Gmail service: %v, %v", err, gsrv)
+    log.Fatalf("Unable to create Gmail service: %v", err)
   }
 
+  // Initialize Sheets service
   ssrv, err := sheets.NewService(ctx, option.WithHTTPClient(client))
-	if err != nil {
-		log.Fatalf("Unable to create Sheets service: %v", err)
-	}
+  if err != nil {
+    log.Fatalf("Unable to create Sheets service: %v", err)
+  }
 
+  // Set up Gin routes and start the server
   r := gin.Default()
   setupRoutes(r, gsrv, ssrv, &historyBuffer, messageSet)
   if err := r.Run("0.0.0.0:3000"); err != nil {
-    log.Fatalf("Error starting server: %v\n", err)
+    log.Fatalf("Error starting server: %v", err)
   }
 }

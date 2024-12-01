@@ -46,7 +46,7 @@ func (l *LoggingTokenSource) Token() (*oauth2.Token, error) {
   // Log when the token is refreshed
   if newToken.Valid() && newToken.AccessToken != "" {
     log.Println(newToken)
-    log.Printf("Refreshed Access Token: %s", newToken.AccessToken)
+    log.Printf("Refreshed Access Token: %s\n", newToken.AccessToken)
   }
   return newToken, nil
 }
@@ -55,16 +55,21 @@ func main() {
   var historyBuffer []uint64 // Maintains older history IDs
   messageSet := make(map[string]bool) // To deduplicate messages
 
-  // Load environment variables
   err := godotenv.Load(".env")
   if err != nil {
-    log.Fatalf("Error loading .env file: %v", err)
+    log.Printf("Error loading .env from default location: %v", err)
+    // Try loading it from /root/.env inside the container
+    err = godotenv.Load("/root/.env")
+    if err != nil {
+      log.Fatalf("Error loading .env from /root/.env: %v", err)
+    }
   }
 
   clientID := os.Getenv("CLIENT_ID")
   clientSecret := os.Getenv("CLIENT_SECRET")
   refreshToken := os.Getenv("REFRESH_TOKEN")
   accessToken := os.Getenv("ACCESS_TOKEN")
+  log.Println(accessToken)
 
   if clientID == "" || clientSecret == "" || refreshToken == "" {
     log.Fatalf("Missing required environment variables")

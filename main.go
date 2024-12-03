@@ -13,24 +13,6 @@ import (
 	"google.golang.org/api/sheets/v4"
 )
 
-// Add a new historyId to the buffer
-func addToBuffer(historyBuffer *[]uint64, historyID uint64) {
-  //NOTE: we use pointer types here because operating on a slice returns a new slice leaving the original unchanged.
-  *historyBuffer = append(*historyBuffer, historyID) 
-  if len(*historyBuffer) > 1 {
-    *historyBuffer = (*historyBuffer)[1:] // Remove the first element
-  }
-}
-
-// Get the oldest historyId from the buffer
-func getOldestHistoryID(historyBuffer []uint64) uint64 {
-  if len(historyBuffer) == 0 {
-    return 0
-  }
-  return historyBuffer[0]
-}
-
-
 // LoggingTokenSource is a custom TokenSource wrapper that logs refresh events.
 type LoggingTokenSource struct {
   source oauth2.TokenSource
@@ -52,9 +34,6 @@ func (l *LoggingTokenSource) Token() (*oauth2.Token, error) {
 }
 
 func main() {
-  var historyBuffer []uint64 // Maintains older history IDs
-  messageSet := make(map[string]bool) // To deduplicate messages
-
   err := godotenv.Load(".env")
   if err != nil {
     log.Printf("Error loading .env from default location: %v", err)
@@ -116,10 +95,25 @@ func main() {
     log.Fatalf("Unable to create Sheets service: %v", err)
   }
 
+  ch := make(chan uint64, 100)
+  go processNotifs(ch, gsrv, ssrv, "me")
+
   // Set up Gin routes and start the server
   r := gin.Default()
-  setupRoutes(r, gsrv, ssrv, &historyBuffer, messageSet)
+  setupRoutes(r, gsrv, ssrv, ch)
   if err := r.Run("0.0.0.0:3000"); err != nil {
     log.Fatalf("Error starting server: %v", err)
+  }
+}
+
+func processNotifs(ch <-chan uint64, gsrv *gmail.Service, ssrv *sheets.Service, user string) {
+  var prev uint64 = 0
+  for data := range ch {
+    if prev == 0 {
+      prev = data
+    } else {
+      processHistory(gsrv, ssrv, user, prev)
+      prev = data
+    }
   }
 }

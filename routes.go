@@ -6,6 +6,6 @@ import (
 	"google.golang.org/api/sheets/v4"
 )
 
-func setupRoutes(r *gin.Engine, gsrv *gmail.Service, ssrv *sheets.Service, historyBuffer *[]uint64, messageSet map[string]bool) {
-	r.POST("/webhook", webhookHandler(gsrv, ssrv, historyBuffer, messageSet))
+func setupRoutes(r *gin.Engine, gsrv *gmail.Service, ssrv *sheets.Service, ch chan<- uint64) {
+  r.POST("/webhook", webhookHandler(gsrv, ssrv, ch))
 }

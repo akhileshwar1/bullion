@@ -11,10 +11,10 @@ import (
   "strconv"
   "github.com/gin-gonic/gin"
   "google.golang.org/api/gmail/v1"
-	"google.golang.org/api/sheets/v4"
+  "google.golang.org/api/sheets/v4"
 )
 
-func webhookHandler(gsrv *gmail.Service, ssrv *sheets.Service, historyBuffer *[]uint64, messageSet map[string]bool) gin.HandlerFunc {
+func webhookHandler(gsrv *gmail.Service, ssrv *sheets.Service, ch chan<- uint64) gin.HandlerFunc {
   return func(c *gin.Context) {
     var pubSubMessage PubSubMessage
     if err := c.ShouldBindJSON(&pubSubMessage); err != nil {
@@ -31,45 +31,31 @@ func webhookHandler(gsrv *gmail.Service, ssrv *sheets.Service, historyBuffer *[]
     }
 
     fmt.Printf("Decoded data: %+v\n", decodedData)
-    // Inputs
-    user := "me"
     historyID := decodedData.HistoryID
-    processHistory(gsrv, ssrv, user, historyID, historyBuffer, messageSet) // Use the passed srv
+    ch <- historyID
     c.JSON(http.StatusOK, gin.H{"status": "success"})
   }
 }
 
-func processHistory(gsrv *gmail.Service, ssrv *sheets.Service, user string, historyID uint64, historyBuffer *[]uint64, messageSet map[string]bool) error {
-  oldestHistoryID := getOldestHistoryID(*historyBuffer)
+func processHistory(gsrv *gmail.Service, ssrv *sheets.Service, user string, historyID uint64) error {
   fmt.Println("in processing history!!")
-  fmt.Println(oldestHistoryID)
-  if oldestHistoryID == 0 {
-    addToBuffer(historyBuffer, historyID)
-    return fmt.Errorf("no historyId available to query")
-  }
-
-  // we don't start with the latest historyid since there will be no changes after that.
-  historyCall := gsrv.Users.History.List(user).StartHistoryId(oldestHistoryID)
+  historyCall := gsrv.Users.History.List(user).StartHistoryId(historyID)
   response, err := historyCall.Do()
   if err != nil {
+    fmt.Println("in here!")
     return fmt.Errorf("error retrieving history: %v", err)
   }
 
-  log.Println(messageSet)
+  fmt.Println(response.History)
   for _, history := range response.History {
     for _, msgAdded := range history.MessagesAdded {
-      if !messageSet[msgAdded.Message.Id] {
-        messageSet[msgAdded.Message.Id] = true
-        err := processMessage(gsrv, ssrv, user, msgAdded.Message.Id)
-        if err != nil {
-          log.Printf("Error processing message: %v\n", err)
-        }
+      err := processMessage(gsrv, ssrv, user, msgAdded.Message.Id)
+      if err != nil {
+        log.Printf("Error processing message: %v\n", err)
       }
     }
   }
 
-  // Add the latest historyId to the buffer.
-  addToBuffer(historyBuffer, historyID)
   return nil
 }
 
@@ -146,79 +132,79 @@ func isEmailFrom(messageResponse *gmail.Message, expectedSender string) bool {
 }
 
 func parseTransaction(subject, body string) (*TransactionDetails, error) {
-    // Determine transaction type from the subject
-    subjectWords := strings.Fields(subject)
-    if len(subjectWords) == 0 {
-        return nil, fmt.Errorf("empty subject")
-    }
-    transactionType := subjectWords[0] // First word is either "Debit" or "Credit"
+  // Determine transaction type from the subject
+  subjectWords := strings.Fields(subject)
+  if len(subjectWords) == 0 {
+    return nil, fmt.Errorf("empty subject")
+  }
+  transactionType := subjectWords[0] // First word is either "Debit" or "Credit"
 
-    if transactionType != "Debit" && transactionType != "Credit" {
-        return nil, fmt.Errorf("unknown transaction type: %s", transactionType)
-    }
+  if transactionType != "Debit" && transactionType != "Credit" {
+    return nil, fmt.Errorf("unknown transaction type: %s", transactionType)
+  }
 
-    // Regex to extract the amount
-    re := regexp.MustCompile(`INR\s([\d,]+(?:\.\d{2})?)`) // Matches patterns like "INR 999" or "INR 222.73"
-    matches := re.FindStringSubmatch(body)
-    if len(matches) < 2 {
-        return nil, fmt.Errorf("amount not found in body")
-    }
+  // Regex to extract the amount
+  re := regexp.MustCompile(`INR\s([\d,]+(?:\.\d{2})?)`) // Matches patterns like "INR 999" or "INR 222.73"
+  matches := re.FindStringSubmatch(body)
+  if len(matches) < 2 {
+    return nil, fmt.Errorf("amount not found in body")
+  }
 
-    // Convert the amount to float
-    amountStr := strings.ReplaceAll(matches[1], ",", "") // Remove commas if present
-    amount, err := strconv.ParseFloat(amountStr, 64)
-    if err != nil {
-        return nil, fmt.Errorf("invalid amount format: %v", err)
-    }
+  // Convert the amount to float
+  amountStr := strings.ReplaceAll(matches[1], ",", "") // Remove commas if present
+  amount, err := strconv.ParseFloat(amountStr, 64)
+  if err != nil {
+    return nil, fmt.Errorf("invalid amount format: %v", err)
+  }
 
-    // Return parsed transaction details
-    return &TransactionDetails{
-        Type:   transactionType,
-        Amount: amount,
-    }, nil
+  // Return parsed transaction details
+  return &TransactionDetails{
+    Type:   transactionType,
+    Amount: amount,
+  }, nil
 }
 
 
 func updateCashFlow(ssrv *sheets.Service, spreadsheetID string, sheetName string, transaction TransactionDetails) error {
-    // Define the target cell range using sheetID and transaction type
-    var cellRange string
-    if transaction.Type == "Debit" {
-        cellRange = fmt.Sprintf("%s!%s", sheetName, os.Getenv("CF_DEBIT_CELL"))
-    } else if transaction.Type == "Credit" {
-        cellRange = fmt.Sprintf("%s!%s", sheetName, os.Getenv("CF_CREDIT_CELL"))
-    } else {
-        return fmt.Errorf("unknown transaction type: %s", transaction.Type)
-    }
+  // Define the target cell range using sheetID and transaction type
+  var cellRange string
+  if transaction.Type == "Debit" {
+    cellRange = fmt.Sprintf("%s!%s", sheetName, os.Getenv("CF_DEBIT_CELL"))
+  } else if transaction.Type == "Credit" {
+    cellRange = fmt.Sprintf("%s!%s", sheetName, os.Getenv("CF_CREDIT_CELL"))
+  } else {
+    return fmt.Errorf("unknown transaction type: %s", transaction.Type)
+  }
 
-    // Read the current value in the target cell
-    readResp, err := ssrv.Spreadsheets.Values.Get(spreadsheetID, cellRange).Do()
+  // Read the current value in the target cell
+  readResp, err := ssrv.Spreadsheets.Values.Get(spreadsheetID, cellRange).Do()
+  if err != nil {
+    fmt.Println(err)
+    return fmt.Errorf("unable to read cell value: %v", err)
+  }
+
+  // Parse the current value (default to 0 if the cell is empty)
+  var currentValue float64
+  if len(readResp.Values) > 0 && len(readResp.Values[0]) > 0 {
+    currentValue, err = strconv.ParseFloat(readResp.Values[0][0].(string), 64)
     if err != nil {
-        fmt.Println(err)
-        return fmt.Errorf("unable to read cell value: %v", err)
+      return fmt.Errorf("invalid number format in cell: %v", err)
     }
+  }
 
-    // Parse the current value (default to 0 if the cell is empty)
-    var currentValue float64
-    if len(readResp.Values) > 0 && len(readResp.Values[0]) > 0 {
-        currentValue, err = strconv.ParseFloat(readResp.Values[0][0].(string), 64)
-        if err != nil {
-            return fmt.Errorf("invalid number format in cell: %v", err)
-        }
-    }
+  newValue := currentValue + transaction.Amount
 
-    newValue := currentValue + transaction.Amount
+  // Write the updated value back to the cell
+  writeReq := &sheets.ValueRange{
+    Values: [][]interface{}{{newValue}},
+  }
+  _, err = ssrv.Spreadsheets.Values.Update(spreadsheetID, cellRange, writeReq).ValueInputOption("RAW").Do()
+  if err != nil {
+    return fmt.Errorf("unable to update cell value: %v", err)
+  }
 
-    // Write the updated value back to the cell
-    writeReq := &sheets.ValueRange{
-        Values: [][]interface{}{{newValue}},
-    }
-    _, err = ssrv.Spreadsheets.Values.Update(spreadsheetID, cellRange, writeReq).ValueInputOption("RAW").Do()
-    if err != nil {
-        return fmt.Errorf("unable to update cell value: %v", err)
-    }
-
-    log.Printf("Updated %s cell (%s) with new value: %.2f\n", transaction.Type, cellRange, newValue)
-    return nil
+  log.Printf("Updated %s cell (%s) with new value: %.2f\n", transaction.Type, cellRange, newValue)
+  return nil
 }
 
 
